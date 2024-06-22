@@ -3,7 +3,7 @@ import numpy as np
 # Definition of Participant
 # A participant has an id, a load profile, a flag indicating whether it is a prosumer, and a PV profile
 class Participant:
-    def __init__(self, id, profile, pv=False, pv_profile=None):
+    def __init__(self, id, profile, pv=False, pv_profile=None, battery_capacity=0):
         self.id = id
         self.profile = profile
         self.pv = pv
