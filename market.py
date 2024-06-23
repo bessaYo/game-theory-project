@@ -1,5 +1,10 @@
 import numpy as np
 
+# time arrays and scalars
+day_slots = 96
+day_time = np.linspace(0, 24, day_slots*5)
+days = 14
+
 # Definition of Participant
 # A participant has an id, a load profile, a flag indicating whether it is a prosumer, and a PV profile
 class Participant:
@@ -12,6 +17,7 @@ class Participant:
         self.energy_supply = np.zeros_like(profile) if not pv else np.array(pv_profile)
         self.bids = []
         self.asks = []
+        self.energy_storage = np.zeros(days + 1)
 
 
 # Definition of the Continuous Double Auction Market
@@ -64,25 +70,22 @@ class CDAMarket:
 
 # Zero-Intelligence Strategy where agents randomly choose a price and quantity
 def zi_strategy(participant, best_bid_price, best_ask_price, min_price, max_price, time_remaining):
-    if participant.pv:
-        bid_price = np.random.uniform(min_price, max_price)
-        bid_quantity = np.maximum(participant.energy_supply - participant.energy_demand, 0).sum()
-        return (bid_price, bid_quantity, 0, 0)
-    else:
-        ask_price = np.random.uniform(min_price, max_price)
-        ask_quantity = np.maximum(participant.energy_demand - participant.energy_supply, 0).sum()
-        return (0, 0, ask_price, ask_quantity)
+    bid_price = np.random.uniform(min_price, max_price) if participant.pv else 0     # set bid orders to 0 for consumers
+    bid_quantity = np.maximum(participant.energy_supply - participant.energy_demand, 0).sum() if participant.pv else 0     # set bid orders to 0 for consumers
+    ask_price = np.random.uniform(min_price, max_price)
+    ask_quantity = np.maximum(participant.energy_demand - participant.energy_supply, 0).sum()
+    return (bid_price, bid_quantity, ask_price, ask_quantity)
 
 # Eyes on the Best Strategy where agents set their prices based on the best bid and ask prices
 def eob_strategy(participant, best_bid_price, best_ask_price, min_price, max_price, time_remaining):
     # Delta berechnen, abhängig von der verbleibenden Zeit
     delta = (1 - (time_remaining ** 2)) * ((max_price - min_price) / 2)
     if best_bid_price >= best_ask_price:
-        bid_price = best_bid_price - delta
+        bid_price = best_bid_price - delta if participant.pv else 0     # set bid orders to 0 for consumers
         ask_price = best_ask_price + delta
     else:
-        bid_price = best_bid_price + delta
+        bid_price = best_bid_price + delta if participant.pv else 0     # set bid orders to 0 for consumers
         ask_price = best_ask_price - delta
-    bid_quantity = np.maximum(participant.energy_supply - participant.energy_demand, 0).sum()
+    bid_quantity = np.maximum(participant.energy_supply - participant.energy_demand, 0).sum() if participant.pv else 0     # set bid orders to 0 for consumers
     ask_quantity = np.maximum(participant.energy_demand - participant.energy_supply, 0).sum()
     return (bid_price, bid_quantity, ask_price, ask_quantity)

@@ -3,15 +3,10 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.interpolate import CubicSpline
-from market import CDAMarket, Participant, zi_strategy, eob_strategy
+from market import *
 
 
 np.random.seed(0)
-
-# time arrays and scalars
-day_slots = 96
-day_time = np.linspace(0, 24, day_slots*5)
-days = 14
 
 # Estimated Values for L1 and L2 (acc. to source-paper)
 time_points = np.arange(25)
@@ -36,13 +31,21 @@ load_profiles = {
     'L2_3' : L2 * 1.5
 }
 
+# function to determine weather each day
+def weather(alpha_prev_day):
+    alpha = abs(1 - abs(np.random.normal(loc = alpha_prev_day)))     # better for seed(0)
+    #alpha = abs(np.random.normal(loc = old_alpha))     # better w/o seed
+    return 1 if alpha > 1 else alpha
+
+alpha = np.ones(days + 1)
+
 # PV Generation Curve (adapted from Paper Source)
 pv_profile = (1440 * np.exp(-((day_time - 12) ** 2) / 8)  + 5 * np.random.normal(size=day_time.size)) * (day_time > 6) * (day_time < 18) + 20 * np.random.normal(size=day_time.size) * (day_time > 9) * (day_time < 16)
 
-# feed-in tariff in CNY/kWh
+# feed-in tariff in €/kWh in Germany 2024
 min_price = 0.1327
 
-# retail tariff in CNY/kWh
+# retail tariff in €/kWh in Germany 2024
 max_price = 0.4175
 
 # 18 participants with pv and 18 participants without pv
@@ -88,7 +91,7 @@ for i in range(num_prosumers):
             
     participants.append(Participant(id=f'P{i+1}', profile=profile, pv=True, pv_profile=pv_profile))
 
-def simulate_cda_market(participants, strategy_func, min_price, max_price, days, day_slots):
+def simulate_cda_market(participants, strategy_func, min_price, max_price, day_slots):
     market = CDAMarket(participants, min_price, max_price)
     results = []
     for t in range(day_slots):
@@ -99,15 +102,24 @@ def simulate_cda_market(participants, strategy_func, min_price, max_price, days,
         market.clear_market()
     return results
 
-# simulation with Zero-Intelligence Strategy
-zi_matches = simulate_cda_market(participants, zi_strategy, min_price, max_price, day_slots)
+for d in range(1, days + 1):
 
-# simulation with Eyes on the Best Strategy
-eob_matches = simulate_cda_market(participants, eob_strategy, min_price, max_price, day_slots)
+    # determine weather for the day
+    alpha[d] = weather(alpha[d-1])
 
-# create dataframes for visualization
-zi_df = pd.DataFrame(zi_matches, columns=['Buyer', 'Seller', 'Quantity', 'Price'])
-eob_df = pd.DataFrame(eob_matches, columns=['Buyer', 'Seller', 'Quantity', 'Price'])
+    # pv-profile of prosumers depending on weather
+    for p in participants:
+        p.pv_profile = p.pv_profile * alpha[d]
+
+    # simulation with Zero-Intelligence Strategy
+    zi_matches = simulate_cda_market(participants, zi_strategy, min_price, max_price, day_slots)
+
+    # simulation with Eyes on the Best Strategy
+    eob_matches = simulate_cda_market(participants, eob_strategy, min_price, max_price, day_slots)
+
+    # create dataframes for visualization
+    zi_df = pd.DataFrame(zi_matches, columns=['Buyer', 'Seller', 'Quantity', 'Price'])
+    eob_df = pd.DataFrame(eob_matches, columns=['Buyer', 'Seller', 'Quantity', 'Price'])
 
 # visualization
 plt.figure(figsize=(14, 7))
