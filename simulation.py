@@ -1,87 +1,69 @@
-# simulate.py
-import numpy as np
-import random
-import pandas as pd
+from market import CDAMarket, Participant, zi_strategy
+from loadProfiles import load_profiles, G1
 import matplotlib.pyplot as plt
-from market import CDAMarket, Participant, zi_strategy, eob_strategy
-from loadProfiles import load_profiles, pv_profile
+import random
 
-print(f"Load profiles {load_profiles}")
+# time slots per day a 15-minute intervals
+time_slots = 96
 
-print(f"PV profiles {pv_profile}")
-
-np.random.seed(0)
-
-# time slots per day
-time_slots = 96  
-
-# labels of load profiles
-profiles = ['L1-1', 'L1-2', 'L1-3', 'L2-1', 'L2-2', 'L2-3']
-
-# feed-in tariff in CNY/kWh
+# feed-in tariff in €/kWh
 min_price = 0.37
 
-# retail tariff in CNY/kWh
+# retail tariff in €/kWh
 max_price = 0.5
 
-
-# 18 participants with pv and 18 participants without pv
-num_prosumers = 18
-num_consumers = 18
+# number of prosumers and consumers
+num_prosumers = 8
+num_consumers = 8
 
 participants = []
 
-# add participants to the market with load profiles and pv profiles
+# otc contracts
+otc_contracts = [('C1', 'P1', 30, 0.45), ('C2', 'P2', 20, 0.4), ('C3', 'P3', 10, 0.35)]
+
+# add particpants with load and pv profiles
 for i in range(num_consumers):
-    profile = random.choice(profiles)
-    load_profile = load_profiles[profile]
-    participants.append(Participant(id=f'C{i+1}', profile=load_profile))
+    load_profile = random.choice(load_profiles)
+    participants.append(Participant(id=f'C{i+1}', load_profile=load_profile, pv=False))
 
 for i in range(num_prosumers):
-    profile = random.choice(profiles)
-    load_profile = load_profiles[profile]
-    participants.append(Participant(id=f'P{i+1}', profile=load_profile, pv=True, pv_profile=pv_profile))
+    load_profile = random.choice(load_profiles)
+    pv_profile = G1 
+    participants.append(Participant(id=f'P{i+1}', load_profile=load_profile, pv=True, pv_profile=pv_profile))
 
-for participant in participants:
-    print(f'{participant.id} - Load: {participant.energy_demand}, Supply: {participant.energy_supply}')
+# initialize market
+market = CDAMarket(participants, otc_contracts, min_price, max_price)
 
-def simulate_cda_market(participants, strategy_func, min_price, max_price, time_slots):
-    market = CDAMarket(participants, min_price, max_price)
-    results = []
-    for t in range(time_slots):
-        time_remaining = (time_slots - t) / time_slots
-        market.collect_orders(strategy_func, t, time_remaining)
-        matches = market.match_orders()
-        results.extend(matches)
+# simulation
+for time_slot in range(time_slots):
+    if time_slot in range(40,50):
+        print("--------------------------------------------------")
+        print(f"Time Slot {time_slot + 1}/{time_slots}")
+        # apply otc contracts and adjust prosumer supply once at the beginning of each time slot
+        market.deduce_prosumer_supply(time_slot)
+        market.apply_otc_contracts(time_slot)
+
+        # try to match orders multiple times within the time slot
+        for round in range(15): # in a 15-minute interval, one round per minute
+            print(f"Round {round + 1} in Time Slot {time_slot + 1}")
+            market.collect_orders(zi_strategy, time_slot)
+            market.match_orders(time_slot)
+            market.order_book = []
+        
+        # clear the market after all rounds are completed
         market.clear_market()
-    return results
 
-# simulation with Zero-Intelligence Strategy
-zi_matches = simulate_cda_market(participants, zi_strategy, min_price, max_price, time_slots)
 
-# simulation with Eyes on the Best Strategy
-eob_matches = simulate_cda_market(participants, eob_strategy, min_price, max_price, time_slots)
+trade_history = market.trade_history 
 
-# create dataframes for visualization
-zi_df = pd.DataFrame(zi_matches, columns=['Buyer', 'Seller', 'Quantity', 'Price'])
-eob_df = pd.DataFrame(eob_matches, columns=['Buyer', 'Seller', 'Quantity', 'Price'])
+x_values = [i * 5 for i in range(len(trade_history))]
 
-#visualization
-plt.figure(figsize=(14, 7))
-
-plt.subplot(2, 1, 1)
-plt.plot(zi_df.index, zi_df['Price'], label='ZI Trade Prices', alpha=0.6)
+plt.figure(figsize=(10, 5))
+plt.plot(x_values, trade_history, '-o', label='Trade Prices', color='blue') 
+plt.title('Trade Prices for Specific Time Slots')
 plt.xlabel('Trade Number')
-plt.ylabel('Price')
+plt.ylabel('Price (€/kWh)')
+plt.yticks([min_price, max_price], [f'Min Price: {min_price}€/kWh', f'Max Price: {max_price}€/kWh'])
 plt.legend()
-plt.title('Zero-Intelligence Strategy - Trade Prices')
-
-plt.subplot(2, 1, 2)
-plt.plot(eob_df.index, eob_df['Price'], label='EOB Trade Prices', alpha=0.6)
-plt.xlabel('Trade Number')
-plt.ylabel('Price')
-plt.legend()
-plt.title('Eyes on the Best Strategy - Trade Prices')
-
-plt.tight_layout()
+plt.grid(True)
 plt.show()
