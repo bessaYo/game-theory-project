@@ -53,6 +53,9 @@ num_prosumers = 18
 num_consumers = 18
 
 participants = []
+matches = [[],[]]
+df = [[],[]]
+strategies = np.array[[zi_strategy, eob_strategy], ['bat_CDA', 'CDA_bat']]
 
 # add participants to the market with load profiles and pv profiles
 for i in range(num_consumers):
@@ -89,49 +92,52 @@ for i in range(num_prosumers):
         case 5:
             profile = load_profiles['L2-3']
             
-    participants.append(Participant(id=f'P{i+1}', profile=profile, pv=True, pv_profile=pv_profile))
+    participants.append(Participant(id=f'P{i+1}', profile=profile, pv=True, pv_profile=pv_profile, battery_capacity=5000))
 
-def simulate_cda_market(participants, strategy_func, min_price, max_price, day_slots):
+def simulate_p2p_market(participants, strategy_func, min_price, max_price, day_slots):
     market = CDAMarket(participants, min_price, max_price)
     results = []
     for t in range(day_slots):
         time_remaining = (day_slots - t) / day_slots
-        market.collect_orders(strategy_func, t, time_remaining)
+        for p in participants:
+            p.energy_demand[t] =- p.withdraw_battery(p.energy_demand[t])        # Ufuk: energy-array-elems sollten noch so verrechnet werden, dass aus W -> kWh wird
+            if strategy_func[1] == 'bat_CDA':
+                p.energy_storage =+ p.load_battery(p.pv_profile[t] - p.energy_demand[t])
+        market.collect_orders(strategy_func[0], t, time_remaining)
         matches = market.match_orders()
         results.extend(matches)
+        for p in participants:
+            if strategy_func[1] == 'CDA_bat': p.energy_storage =+ p.load_battery(p.energy_supply[t] - p.energy_demand[t])               
         market.clear_market()
-    return results
+        return results
 
-for d in range(1, days + 1):
+for trade_s in range(len(strategies[0])):
+    for bat_s in range(len(strategies[1])):
+        for d in range(1, days + 1):
+            # determine weather for the day
+            alpha[d] = weather(alpha[d-1])
 
-    # determine weather for the day
-    alpha[d] = weather(alpha[d-1])
+            # pv-profile of prosumers depending on weather
+            for p in participants:
+                p.pv_profile = p.pv_profile * alpha[d]
 
-    # pv-profile of prosumers depending on weather
-    for p in participants:
-        p.pv_profile = p.pv_profile * alpha[d]
 
-    # simulation with Zero-Intelligence Strategy
-    zi_matches = simulate_cda_market(participants, zi_strategy, min_price, max_price, day_slots)
+            # simulation of all Strategy-Combinations
+            matches[trade_s][bat_s] = simulate_p2p_market(participants, strategies[trade_s][bat_s], min_price, max_price)
+            df[trade_s][bat_s] = pd.DataFrame(matches[trade_s][bat_s], columns=['Buyer', 'Seller', 'Quantity', 'Price'])      # create dataframes for visualization
 
-    # simulation with Eyes on the Best Strategy
-    eob_matches = simulate_cda_market(participants, eob_strategy, min_price, max_price, day_slots)
 
-    # create dataframes for visualization
-    zi_df = pd.DataFrame(zi_matches, columns=['Buyer', 'Seller', 'Quantity', 'Price'])
-    eob_df = pd.DataFrame(eob_matches, columns=['Buyer', 'Seller', 'Quantity', 'Price'])
-
-# visualization
+# visualization         # Ufuk: verschieben in For-Loops oben
 plt.figure(figsize=(14, 7))
 
-plt.subplot(2, 1, 1)
+plt.subplot(2, 2, 1)
 plt.plot(zi_df.index, zi_df['Price'], label='ZI Trade Prices', alpha=0.6)
 plt.xlabel('Trade Number')
 plt.ylabel('Price')
 plt.legend()
 plt.title('Zero-Intelligence Strategy - Trade Prices')
 
-plt.subplot(2, 1, 2)
+plt.subplot(2, 2, 2)
 plt.plot(eob_df.index, eob_df['Price'], label='EOB Trade Prices', alpha=0.6)
 plt.xlabel('Trade Number')
 plt.ylabel('Price')

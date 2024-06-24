@@ -14,10 +14,22 @@ class Participant:
         self.pv = pv
         self.pv_profile = pv_profile
         self.energy_demand = np.array(profile)
-        self.energy_supply = np.zeros_like(profile) if not pv else np.array(pv_profile)
+        self.energy_supply = np.zeros_like(pv_profile) #if not pv else np.array(pv_profile) Ufuk: supply should only be loaded depending on battery
         self.bids = []
         self.asks = []
-        self.energy_storage = np.zeros(days + 1)
+        self.energy_storage = 0
+        self.battery_capacity = battery_capacity
+
+    def load_battery(self, load):
+        new_storage = self.energy_storage + max(load, 0)
+        remaining = max(new_storage - self.battery_capacity, 0)
+        self.energy_storage = min(new_storage, self.battery_capacity)       # load battery and
+        return remaining                                                    # ... output remaining energy (that couldn't be stored)
+    
+    def withdraw_battery(self, demand):
+        withdraw = min(demand, self.energy_storage)                         
+        self.energy_storage =- withdraw                                     # withdraw stored energy from battery and
+        return withdraw                                                     # output withdrawal
 
 
 # Definition of the Continuous Double Auction Market
@@ -66,26 +78,27 @@ class CDAMarket:
     def clear_market(self):
         self.order_book = []
 
+
 # Strategies for agents
 
 # Zero-Intelligence Strategy where agents randomly choose a price and quantity
 def zi_strategy(participant, best_bid_price, best_ask_price, min_price, max_price, time_remaining):
-    bid_price = np.random.uniform(min_price, max_price) if participant.pv else 0     # set bid orders to 0 for consumers
-    bid_quantity = np.maximum(participant.energy_supply - participant.energy_demand, 0).sum() if participant.pv else 0     # set bid orders to 0 for consumers
-    ask_price = np.random.uniform(min_price, max_price)
-    ask_quantity = np.maximum(participant.energy_demand - participant.energy_supply, 0).sum()
-    return (bid_price, bid_quantity, ask_price, ask_quantity)
+    ask_price = np.random.uniform(min_price, max_price) if participant.pv else 0     # set ask orders to 0 for consumers
+    ask_quantity = np.maximum(participant.energy_supply - participant.energy_demand, 0).sum() if participant.pv else 0     # set ask orders to 0 for consumers
+    bid_price = np.random.uniform(min_price, max_price)
+    bid_quantity = np.maximum(participant.energy_demand - participant.energy_supply, 0).sum()       # Ufuk: shouldn't demand and supply only be substracted per array-elem. and not for the whole array?
+    return (bid_price, bid_quantity, ask_price, ask_quantity)                                       #       somewhere here withdraw_battery() should also be used
 
 # Eyes on the Best Strategy where agents set their prices based on the best bid and ask prices
 def eob_strategy(participant, best_bid_price, best_ask_price, min_price, max_price, time_remaining):
     # Delta berechnen, abhängig von der verbleibenden Zeit
     delta = (1 - (time_remaining ** 2)) * ((max_price - min_price) / 2)
     if best_bid_price >= best_ask_price:
-        bid_price = best_bid_price - delta if participant.pv else 0     # set bid orders to 0 for consumers
-        ask_price = best_ask_price + delta
+        ask_price = best_ask_price + delta if participant.pv else 0     # set ask orders to 0 for consumers
+        bid_price = best_bid_price - delta
     else:
-        bid_price = best_bid_price + delta if participant.pv else 0     # set bid orders to 0 for consumers
-        ask_price = best_ask_price - delta
-    bid_quantity = np.maximum(participant.energy_supply - participant.energy_demand, 0).sum() if participant.pv else 0     # set bid orders to 0 for consumers
-    ask_quantity = np.maximum(participant.energy_demand - participant.energy_supply, 0).sum()
-    return (bid_price, bid_quantity, ask_price, ask_quantity)
+        ask_price = best_ask_price - delta if participant.pv else 0     # set ask orders to 0 for consumers
+        bid_price = best_bid_price + delta
+    ask_quantity = np.maximum(participant.energy_supply - participant.energy_demand, 0).sum() if participant.pv else 0     # set bid orders to 0 for consumers
+    bid_quantity = np.maximum(participant.energy_demand - participant.energy_supply, 0).sum()       # Ufuk: shouldn't demand and supply only be substracted per array-elem. and not for the whole array?
+    return (bid_price, bid_quantity, ask_price, ask_quantity)                                       #       somewhere here withdraw_battery() should also be used
