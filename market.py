@@ -66,7 +66,7 @@ class CDAMarket:
                 print(f"Collected ask order from {participant.id}: {ask_quantity} kWh at {ask_price}€/kWh for time slot {time_slot}")
 
 
-    # Create order book where bids are sorted in descending order and asks are sorted in ascending order
+    # Match orders based on the current order book
     def match_orders(self, time_slot):
         # Bids are sorted in descending order
         bids = sorted([order for order in self.order_book if order[1] == 'bid'], key=lambda x: -x[2])
