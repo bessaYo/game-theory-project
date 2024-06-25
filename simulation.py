@@ -55,7 +55,7 @@ num_consumers = 18
 participants = []
 matches = [[],[]]
 df = [[],[]]
-strategies = np.array[[zi_strategy, eob_strategy], ['bat_CDA', 'CDA_bat']]
+strategies = [[zi_strategy, eob_strategy], ['bat_CDA', 'CDA_bat']]
 
 # add participants to the market with load profiles and pv profiles
 for i in range(num_consumers):
@@ -127,22 +127,14 @@ for trade_s in range(len(strategies[0])):
             df[trade_s][bat_s] = pd.DataFrame(matches[trade_s][bat_s], columns=['Buyer', 'Seller', 'Quantity', 'Price'])      # create dataframes for visualization
 
 
-# visualization         # Ufuk: verschieben in For-Loops oben
-plt.figure(figsize=(14, 7))
+        # visualization         # Ufuk: verschieben in For-Loops oben
+        strategy_name = strategies[0][trade_s].__name__.split('_')[0]
 
-plt.subplot(2, 2, 1)
-plt.plot(zi_df.index, zi_df['Price'], label='ZI Trade Prices', alpha=0.6)
-plt.xlabel('Trade Number')
-plt.ylabel('Price')
-plt.legend()
-plt.title('Zero-Intelligence Strategy - Trade Prices')
+        plt.figure(figsize=(14, 7))
 
-plt.subplot(2, 2, 2)
-plt.plot(eob_df.index, eob_df['Price'], label='EOB Trade Prices', alpha=0.6)
-plt.xlabel('Trade Number')
-plt.ylabel('Price')
-plt.legend()
-plt.title('Eyes on the Best Strategy - Trade Prices')
-
-plt.tight_layout()
-plt.show()
+        plt.subplot(2, 2, strategies.index([trade_s, bat_s]))
+        plt.plot(matches[trade_s][bat_s], matches[trade_s][bat_s]['Price'], label=f'{strategy_name} Trade Prices', alpha=0.6)
+        plt.xlabel('Trade Number')
+        plt.ylabel('Price')
+        plt.legend()
+        plt.title(f'{strategy_name}  Strategy - Trade Prices')
