@@ -45,3 +45,5 @@ G1 += 5 * np.random.normal(size=time.size) * ((time > 6) & (time < 18))
 G1 += 20 * np.random.normal(size=time.size) * ((time > 9) & (time < 16))
 
 G1 = np.round(G1, 3)
+
+print(L1_1)
