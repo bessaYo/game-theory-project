@@ -1,13 +1,26 @@
 import numpy as np
 
 class Participant:
-    def __init__(self, id, load_profile, pv=False, pv_profile=None):
+    def __init__(self, id, load_profile, pv=False, pv_profile=None, battery_capacity=0):
         self.id = id
         self.pv = pv
         self.energy_demand = np.round(load_profile.copy(), 3)
-        self.energy_supply = np.round(pv_profile.copy(), 3) if pv_profile is not None else np.zeros_like(load_profile)
+        self.energy_supply = np.round(pv_profile.copy(), 3) if pv else np.zeros_like(load_profile)
         self.cost = 0
         self.revenue = 0
+        self.energy_storage = 0
+        self.battery_capacity = battery_capacity
+
+    def load_battery(self, load):
+        new_storage = self.energy_storage + load
+        remaining = max(new_storage - self.battery_capacity, 0)
+        self.energy_storage = min(new_storage, self.battery_capacity)       # load battery and
+        return remaining                                                    # ... output remaining energy (that couldn't be stored)
+    
+    def withdraw_battery(self, demand):
+        withdraw = min(demand, self.energy_storage)                         
+        self.energy_storage -= withdraw                                     # withdraw stored energy from battery and
+        return withdraw    
 
 class CDAMarket:
     def __init__(self, participants, otc_contracts, min_price, max_price):
@@ -45,7 +58,7 @@ class CDAMarket:
                 print(f"OTC Contract executed: {seller_id} sells {quantity} kWh to {buyer_id} at {price}€ per unit.")
 
     # Prosumers consume their energy first and then supply the excess energy    
-    def deduce_prosumer_supply(self, time_slot):
+    def deduce_prosumer_supply(self, time_slot, bat_strategy):
         for participant in self.participants:
             if participant.pv:
                 # Calculate net energy
@@ -54,9 +67,12 @@ class CDAMarket:
                 # Adjust demand and supply based on net energy
                 if net_energy > 0:
                     participant.energy_supply[time_slot] = net_energy
+                    if bat_strategy == 'bat_CDA':
+                        participant.energy_supply[time_slot] = participant.load_battery(net_energy)
                     participant.energy_demand[time_slot] = 0
                 else:
                     participant.energy_demand[time_slot] = -net_energy
+                    participant.energy_demand[time_slot] -= participant.withdraw_battery(-net_energy)
                     participant.energy_supply[time_slot] = 0
 
     # Collect orders from participants based on their strategy
@@ -100,7 +116,7 @@ class CDAMarket:
                         participant.energy_demand[time_slot] -= quantity
                         participant.cost += quantity * match_price
                     if participant.id == ask[0]:
-                        participant.energy_supply[time_slot] -= quantity
+                        participant.energy_supply[time_slot] -= quantity        # withdraw quantity surpassing supply from battery
                         participant.revenue += quantity * match_price
                 
                 # Update order book
@@ -121,7 +137,7 @@ class CDAMarket:
     
 
     # Clear unmatched orders with provider prices
-    def clear_market(self):
+    def clear_market(self, bat_strategy):
         for order in self.order_book:
             participant = next(p for p in self.participants if p.id == order[0])
             if order[1] == 'bid':
@@ -130,16 +146,20 @@ class CDAMarket:
                 self.provider_buy += cost
                 print(f"Unmatched bid for {participant.id} cleared with provider: {order[3]} kWh from {order[0]} at {self.max_price}€/kWh with total cost {cost}€")
             else:
-                revenue =  order[3] * self.min_price
+                remaining_quantity = order[3]
+                if bat_strategy == 'CDA_bat':
+                    remaining_quantity = participant.load_battery(order[3])
+                revenue = remaining_quantity * self.min_price
                 participant.revenue += revenue
                 self.provider_sell += revenue
-                print(f"Unmatched ask for {participant.id} cleared with provider: {order[3]} kWh from {order[0]} at {self.min_price}€/kWh with total revenue {revenue}€")
+                if remaining_quantity > 0:
+                    print(f"Unmatched ask for {participant.id} cleared with provider: {remaining_quantity} kWh from {order[0]} at {self.min_price}€/kWh with total revenue {revenue}€")
         self.order_book = []
     
     def traditional_prices(self, time_slot):
         for participant in self.participants:
             if participant.pv:
-                self.traditional_sellers += participant.energy_supply[time_slot] * self.min_price
+                self.traditional_sellers += participant.energy_supply[time_slot] * self.min_price       # + participant.energy_storage
             else:
                 self.traditional_buyers += participant.energy_demand[time_slot] * self.max_price
         return self.traditional_buyers, self.traditional_sellers
@@ -153,7 +173,7 @@ def zi_strategy(participant, min_price, max_price, time_slot, current_bids, curr
     # Prosumers can only sell energy if they have excess energy
     if participant.pv and participant.energy_supply[time_slot] > 0:
         ask_price = np.random.uniform(min_price, max_price)
-        ask_quantity = participant.energy_supply[time_slot]
+        ask_quantity = participant.energy_supply[time_slot]     # + participant.energy_storage
     
     # All participants can buy energy
     if participant.energy_demand[time_slot] > 0:
@@ -181,6 +201,6 @@ def eob_strategy(participant, min_price, max_price, time_slot, current_bids, cur
         ask_price = np.random.uniform(min_price + delta, max_price)
 
     bid_quantity = participant.energy_demand[time_slot] if participant.energy_demand[time_slot] > 0 else 0
-    ask_quantity = participant.energy_supply[time_slot] if participant.pv and participant.energy_supply[time_slot] > 0 else 0
+    ask_quantity = participant.energy_supply[time_slot] if participant.pv and participant.energy_supply[time_slot] > 0 else 0   # + participant.energy_storage
 
     return bid_price, bid_quantity, ask_price, ask_quantity
