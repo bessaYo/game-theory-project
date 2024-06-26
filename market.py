@@ -175,7 +175,7 @@ class CDAMarket:
     def traditional_prices(self, time_slot):
         for participant in self.participants:
             if participant.pv:
-                self.traditional_sellers += participant.trad_supply[time_slot] * self.min_price       # + participant.energy_storage
+                self.traditional_sellers += participant.trad_supply[time_slot] * self.min_price
             else:
                 self.traditional_buyers += participant.trad_demand[time_slot] * self.max_price
         return self.traditional_buyers, self.traditional_sellers

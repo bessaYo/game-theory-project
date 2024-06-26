@@ -66,7 +66,7 @@ def run_simulation(strategy):
                 trade_history.extend(trades)
 
             #market.clear_market(strategy[1])
-            market.clear_market(strategy[1], printer)
+            market.clear_market(strategy[1], print_slot)
             provider_buy += market.provider_buy
             provider_sell += market.provider_sell
 
