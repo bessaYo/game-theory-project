@@ -6,8 +6,6 @@ class Participant:
         self.pv = pv
         self.energy_demand = np.round(load_profile.copy(), 3)
         self.energy_supply = np.round(pv_profile.copy(), 3) if pv else np.zeros_like(load_profile)
-        self.trad_demand = np.round(self.energy_demand.copy(), 3)
-        self.trad_supply = np.round(self.energy_supply.copy(), 3)
         self.cost = 0
         self.revenue = 0
         self.__energy_storage = 0
@@ -62,30 +60,35 @@ class CDAMarket:
                 buyer.cost += quantity * price
                 print(f"OTC Contract executed: {seller_id} sells {quantity} kWh to {buyer_id} at {price}€ per unit.")
 
-    # Prosumers consume their energy first and then supply the excess energy    
-    def deduce_prosumer_supply(self, time_slot, bat_strategy):
+    # Prosumers consume their energy first
+    def balance_prosumer_energy(self, time_slot):
         for participant in self.participants:
             if participant.pv:
                 # Calculate net energy
                 net_energy = participant.energy_supply[time_slot] - participant.energy_demand[time_slot]
-                
-                # Adjust traditional demand and supply based on net energy without battery
-                if net_energy > 0:
-                    participant.trad_supply[time_slot] = net_energy
-                    participant.trad_demand[time_slot] = 0
-                else:
-                    participant.trad_demand[time_slot] = -net_energy
-                    participant.trad_supply[time_slot] = 0
 
-                net_energy += participant.withdraw_battery(participant.get_storage())
-
-                # Adjust demand and supply based on net energy with battery
+                # Adjust demand and supply based on net energy
                 if net_energy > 0:
-                    participant.energy_supply[time_slot] = participant.load_battery(net_energy) if bat_strategy == 'bat_CDA' else net_energy
+                    participant.energy_supply[time_slot] = net_energy
                     participant.energy_demand[time_slot] = 0
                 else:
                     participant.energy_demand[time_slot] = -net_energy
                     participant.energy_supply[time_slot] = 0
+   
+    def manage_battery_storage(self, time_slot, bat_strategy, printer):
+            for participant in self.participants:
+                if participant.pv:
+                    net_energy = participant.energy_supply[time_slot] - participant.energy_demand[time_slot]
+
+                    if bat_strategy == 'bat_CDA' and net_energy > 0:
+                        excess_energy = participant.load_battery(net_energy)
+                        participant.energy_supply[time_slot] = excess_energy
+                        if printer: print(f"Participant {participant.id} - Excess energy after loading battery: {excess_energy} kWh")
+                    elif net_energy < 0:
+                        needed_energy = - net_energy
+                        withdrawn_energy = participant.withdraw_battery(needed_energy)
+                        participant.energy_demand[time_slot] -= withdrawn_energy
+                        if printer: print(f"Participant {participant.id} - Additional energy needed after battery withdrawal: {needed_energy} kWh")
 
     # Collect orders from participants based on their strategy
     def collect_orders(self, strategy, time_slot, current_round, total_rounds, printer):
@@ -98,10 +101,10 @@ class CDAMarket:
                 participant, self.min_price, self.max_price, time_slot, current_bids, current_asks, current_round, total_rounds)
             if bid_quantity > 0:
                 self.order_book.append((participant.id, 'bid', bid_price, bid_quantity, time_slot))
-                #if printer: print(f"{participant.id} places bid for {bid_quantity} kWh at {bid_price}€/kWh")
+                if printer: print(f"{participant.id} places bid for {bid_quantity} kWh at {bid_price}€/kWh")
             if ask_quantity > 0:
                 self.order_book.append((participant.id, 'ask', ask_price, ask_quantity, time_slot))
-                #if printer: print(f"{participant.id} places ask for {ask_quantity} kWh at {ask_price}€/kWh")
+                if printer: print(f"{participant.id} places ask for {ask_quantity} kWh at {ask_price}€/kWh")
 
 
     # Match orders based on the current order book
@@ -129,8 +132,6 @@ class CDAMarket:
                         participant.cost += quantity * match_price
                     if participant.id == ask[0]:
                         participant.energy_supply[time_slot] -= quantity
-                        #if participant.energy_supply[time_slot] < 0:        # withdraw from battery, if quantity surpasses supply
-                        #    participant.energy_supply[time_slot] += participant.withdraw_battery(-participant.energy_supply[time_slot])
                         participant.revenue += quantity * match_price
                 
                 # Update order book
@@ -174,11 +175,12 @@ class CDAMarket:
     
     def traditional_prices(self, time_slot):
         for participant in self.participants:
-            if participant.pv:
-                self.traditional_sellers += participant.trad_supply[time_slot] * self.min_price
+            net_energy = participant.energy_supply[time_slot] - participant.energy_demand[time_slot]
+
+            if net_energy > 0:
+                self.traditional_sellers += net_energy * self.min_price
             else:
-                self.traditional_buyers += participant.trad_demand[time_slot] * self.max_price
-        return self.traditional_buyers, self.traditional_sellers
+                self.traditional_buyers += abs(net_energy) * self.max_price
 
 
 

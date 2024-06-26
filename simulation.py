@@ -9,14 +9,14 @@ max_price = 0.4175      # retail tariff in €/kWh in Germany 2024
 num_prosumers = 18
 num_consumers = 18
 otc_contracts = [('C1', 'P1', 30, 0.1), ('C2', 'P2', 20, 0.2), ('C3', 'P3', 10, 0.3)]
-strategies = [[zi_strategy, eob_strategy], ['bat_CDA', 'CDA_bat']]
-#strategies = [zi_strategy, eob_strategy]
+strategies = [zi_strategy, eob_strategy]
+battery_option = ['CDA_bat', 'bat_CDA', 'no_bat']
 trades, provider_buy, provider_sell, traditional_buyers, traditional_sellers, average_price, price_dispersion, payment_reduction, income_increase, welfare = ([[] for _ in range(4)] for _ in range(10))
 #trades, provider_buy, provider_sell, traditional_buyers, traditional_sellers, average_price, price_dispersion, payment_reduction, income_increase, welfare = ([[] for _ in range(2)] for _ in range(10))
 #trades, average_price, price_dispersion, payment_reduction, income_increase, welfare = ([[] for _ in range(4)] for _ in range(6))
 
 # add participants to the market with load profiles and prosumers additionally with pv profiles
-def initialize_participants(weather=1):      
+def initialize_participants():      
     participants = []
     for i in range(num_consumers):
         m = i % 6
@@ -26,87 +26,130 @@ def initialize_participants(weather=1):
     for i in range(num_prosumers):
         m = i % 6
         profile = load_profiles[m]      
-        participants.append(Participant(id=f'P{i+1}', load_profile=profile, pv=True, pv_profile=G1 * weather, battery_capacity=5))
+        participants.append(Participant(id=f'P{i+1}', load_profile=profile, pv=True, pv_profile=G1, battery_capacity=5))
     return participants
 
-def run_simulation(strategy):
+def run_simulation(strategy, battery):
     trade_history = []
     provider_buy, provider_sell = 0, 0
     traditional_buyers, traditional_sellers = 0, 0
-    print_sim = True        # false if no debugging needed
-    if print_sim:
+    printer = False        # false if no debugging needed
+    if printer:
         print("-" * 50)
-        print(f"Processing simulation with strategies {strategy[0].__name__} and " + strategy[1])
+        print(f"Processing simulation with strategies {strategy.__name__} and " + battery)
+        print("-" * 50)
 
-    for d in range(1, days + 1):
-        alpha[d] = weather(alpha[d-1])
-        market = CDAMarket(initialize_participants(alpha[d]), otc_contracts, min_price, max_price)
-        print_day = True if print_sim and (d == 2 or d == 7 or d == 14) else False
-        if print_day: print(f"Processing day {d} with weather {alpha[d]}...")
+    market = CDAMarket(initialize_participants(), otc_contracts, min_price, max_price)
 
-        for time_slot in range(time_slots):
-            print_slot = True if print_day and (time_slot == 30 or time_slot == 48) else False
-            if print_slot: print(f"Processing time slot {time_slot}...")
-            market.deduce_prosumer_supply(time_slot, strategy[1])
-            #market.deduce_prosumer_supply(time_slot,'')
-            x, y = market.traditional_prices(time_slot)
-            traditional_buyers += x
-            traditional_sellers += y
-            market.apply_otc_contracts(time_slot)
-            
-            for round in range(15):  # 15 rounds per 15-minute time slot
-                printer = True if print_slot and (round == 1 or round == 8) else False
-                if printer: print(f"Processing round {round}...")
-                #market.collect_orders(strategy[0], time_slot, round, 15)
-                market.collect_orders(strategy[0], time_slot, round, 15, printer)
-                trades = market.match_orders(time_slot, printer)
-                #if printer:   
-                #    for participant in market.participants:
-                #        print(f"Participant {participant.id}: Demand={participant.energy_demand[time_slot]}, Supply={participant.energy_supply[time_slot]}, Revenue={participant.revenue}, Cost={participant.cost}")
-                trade_history.extend(trades)
+    for time_slot in range(time_slots):
 
-            #market.clear_market(strategy[1])
-            market.clear_market(strategy[1], print_slot)
-            provider_buy += market.provider_buy
-            provider_sell += market.provider_sell
+        if printer: print(f"Processing time slot {time_slot}...")
+        market.balance_prosumer_energy(time_slot)
+        market.traditional_prices(time_slot)
+        if battery == 'CDA_bat' or battery == 'bat_CDA':
+            market.manage_battery_storage(time_slot, battery, printer)
+        market.apply_otc_contracts(time_slot)
+        
+        for round in range(15):  # 15 rounds per 15-minute time slot
+            if printer: print(f"Processing round {round}...")
+            market.collect_orders(strategy, time_slot, round, 15, printer)
+            trades = market.match_orders(time_slot, printer)
+            if printer:   
+               for participant in market.participants:
+                   print(f"Participant {participant.id}: Demand={participant.energy_demand[time_slot]}, Supply={participant.energy_supply[time_slot]}, Revenue={participant.revenue}, Cost={participant.cost}")
+            trade_history.extend(trades)
+
+        market.clear_market(battery, printer)
+    
+    # Update variables for metrics
+    traditional_buyers += market.traditional_buyers
+    traditional_sellers += market.traditional_sellers
+    provider_buy += market.provider_buy
+    provider_sell += market.provider_sell
 
     return trade_history, provider_buy, provider_sell, traditional_buyers, traditional_sellers
 
-# run simulation with ZI and EOB strategies and battery strategies
-for trade_s in range(len(strategies[0])):
-    for bat_s in range(len(strategies[1])):
-        strategy = (strategies[0][trade_s], strategies[1][bat_s])  # trading and battery storage strategies for this round
-        trades[2*trade_s + bat_s], provider_buy[2*trade_s + bat_s], provider_sell[2*trade_s + bat_s], traditional_buyers[2*trade_s + bat_s], traditional_sellers[2*trade_s + bat_s] = run_simulation(strategy)
-        #trades[2*trade_s + bat_s], provider_buy, provider_sell, traditional_buyers, traditional_sellers = run_simulation(strategy)
 
-#for trade_s in range(len(strategies)):
-#    trades[trade_s], provider_buy[trade_s], provider_sell[trade_s], traditional_buyers[trade_s], traditional_sellers[trade_s] = run_simulation(strategies[trade_s])
+results = [] 
 
+for strategy in strategies:
+    for battery in battery_option:
+        print(f"Running simulation for {strategy.__name__} with {battery} strategy")
+        trades, provider_buy, provider_sell, traditional_buyers, traditional_sellers = run_simulation(strategy, battery)
 
-for i in range(len(trades)):
+        # Metrics
+        average_price = calculate_average_price(trades)
+        price_dispersion = calculate_price_dispersion(trades, average_price)
+        payment_reduction = calculate_payment_reduction(trades, traditional_buyers, provider_buy)
+        income_increase = calculate_income_increase(trades, traditional_sellers, provider_sell)
+        community_welfare = calculate_community_welfare(trades, traditional_sellers, traditional_buyers, provider_buy, provider_sell)
 
-    match i:
-        case 0: string = "ZI strategy + Battery before CDA"
-        case 1: string = "ZI strategy + Battery after CDA"
-        case 2: string = "EoB strategy + Battery before CDA"
-        case 3: string = "EoB strategy + Battery after CDA"
+        # Store results
+        results.append({
+            "strategy": strategy.__name__,
+            "battery": battery,
+            "average_price": np.round(average_price, 4),
+            "price_dispersion": np.round(price_dispersion, 4),
+            "payment_reduction": np.round(payment_reduction, 4),
+            "income_increase": np.round(income_increase, 4),
+            "community_welfare": np.round(community_welfare, 4)
+        })
 
-    # average price
-    average_price[i] = calculate_average_price(trades[i])
-    print("Average price for " + string + f": {average_price[i]}")
+print("\nSimulation Results Summary:")
+for result in results:
+    print(f"Index for {result['strategy']} + {result['battery']}:")
+    print(f"Average price: {result['average_price']}")
+    print(f"Price dispersion: {result['price_dispersion']}")
+    print(f"Payment reduction: {result['payment_reduction']}%")
+    print(f"Income increase: {result['income_increase']}%")
+    print(f"Community welfare: {result['community_welfare']}%")
+    print("-" * 50) 
 
-    # price dispersion
-    price_dispersion[i] = calculate_price_dispersion(trades[i], average_price[i])
-    print("Price dispersion for " + string + f": {price_dispersion[i]}")
+strategies_labels = [f"{result['strategy']} + {result['battery']}" for result in results]
+price_dispersions = [result['price_dispersion'] for result in results]
+payment_reductions = [result['payment_reduction'] for result in results]
+income_increases = [result['income_increase'] for result in results]
+community_welfares = [result['community_welfare'] for result in results]
 
-    # payment reduction
-    payment_reduction[i] = calculate_payment_reduction(trades[i], traditional_buyers[i], provider_buy[i])
-    print("Payment reduction for " + string + f": {payment_reduction[i]}")
+bar_width = 0.5
 
-    # income increase
-    income_increase[i] = calculate_income_increase(trades[i], traditional_sellers[i], provider_sell[i])
-    print("Income increase for " + string + f": {income_increase[i]}")
+# Plot für Preisdispersion
+plt.figure(figsize=(10, 6))
+plt.bar(strategies_labels, price_dispersions, color='navy', width=bar_width)
+plt.xlabel('Strategy and Battery Configuration')
+plt.ylabel('Price Dispersion (€/kWh)')
+plt.title('Price Dispersion by Strategy and Battery Configuration')
+plt.xticks(rotation=60)
+plt.tight_layout()
+plt.show()
 
-    # community welfare
-    welfare[i] = calculate_community_welfare(trades[i], traditional_sellers[i], traditional_buyers[i], provider_buy[i], provider_sell[i])
-    print("Community welfare for " + string + f": {welfare[i]}")
+# Plot für Zahlungsreduktion
+plt.figure(figsize=(10, 6))
+plt.bar(strategies_labels, payment_reductions, color='navy', width=bar_width)
+plt.xlabel('Strategy and Battery Configuration')
+plt.ylabel('Payment Reduction (%)')
+plt.title('Payment Reduction by Strategy and Battery Configuration')
+plt.xticks(rotation=60)
+plt.tight_layout()
+plt.show()
+
+# Plot für Einkommenssteigerung mit unterschiedlichen Farben für positive und negative Werte
+colors = ['green' if x >= 0 else 'red' for x in income_increases]
+plt.figure(figsize=(10, 6))
+plt.bar(strategies_labels, income_increases, color=colors, width=bar_width)
+plt.xlabel('Strategy and Battery Configuration')
+plt.ylabel('Income Increase (%)')
+plt.title('Income Increase by Strategy and Battery Configuration')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+# Plot für Gemeinwohlwerte
+plt.figure(figsize=(12, 6))
+plt.bar(strategies_labels, community_welfares, color='navy', width=bar_width)
+plt.xlabel('Strategy and Battery Configuration')
+plt.ylabel('Community Welfare (%)')
+plt.title('Community Welfare by Strategy and Battery Configuration')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
